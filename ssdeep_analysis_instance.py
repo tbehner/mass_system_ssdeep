@@ -1,44 +1,45 @@
-from mass_client import FileAnalysisClient
-from common_analysis_ssdeep import CommonAnalysisSsdeep
+import sys
+import time
 import logging
+import configparser
+from mass_client import AnalysisClient
+from common_analysis_ssdeep import CommonAnalysisSsdeep
+from mass_api_client.resources import Sample, SsdeepSampleRelation
+from common_helper_files import update_config_from_env
 
-debug_logger = logging.getLogger('debug')
+logging.basicConfig()
+log = logging.getLogger('ssdeep_analysis_system')
+log.setLevel(logging.INFO)
 
-class SsdeepAnalysisInstance(FileAnalysisClient):
-    def __init__(self, config_object):
-        super(SsdeepAnalysisInstance, self).__init__(config_object)
-        self.samples_endpoint = config_object['GLOBAL']['ServerURL'] + 'api/sample/'
-        self.ssdeep_sample_relation_endpoint = config_object['GLOBAL']['ServerURL'] + 'api/sample_relation/submit_ssdeep/'
+class SsdeepAnalysisInstance(AnalysisClient):
+    def __init__(self, **kwargs):
         self.cache = dict()
         self._load_cache()
         self.ssdeep_analysis = CommonAnalysisSsdeep(self.cache)
+        super().__init__(**kwargs)
 
     def _load_cache(self):
-        samples_page = {'next': self.samples_endpoint}
-        while samples_page['next']:
-            next_page_url = samples_page['next']
-            samples_page = self.http_client.get(next_page_url).json()
-            for sample in samples_page['results']:
-                if sample['_cls'].startswith('Sample.FileSample'):
-                    self.cache[sample['url']] = sample['ssdeep_hash']
+        start_time = time.time()
+        for sample in Sample.items():
+            if sample._class_identifier.startswith('Sample.FileSample'):
+                self.cache[sample.id] = sample.ssdeep_hash
+        log.info('Finished building cache in {}sec. Size {} bytes.'.format(time.time() - start_time, sys.getsizeof(self.cache)))
 
-    def post_new_ssdeep_relation(self, sample_url, other_url, value):
-        data = {
-                'sample': sample_url,
-                'other': other_url,
-                'match': value
-                }
-        response = self.http_client.post_json(self.ssdeep_sample_relation_endpoint, data=data)
-        if response.status_code != 201:
-            debug_logger.error('Could not post ssdeep sample relation')
-            debug_logger.error(response.text)
+    def analyze(self, scheduled_analysis):
+        sample = scheduled_analysis.get_sample()
+        report = self.ssdeep_analysis.analyze_string(sample.ssdeep_hash, sample.id)
 
-    def do_analysis(self, analysis_request):
-        report = self.ssdeep_analysis.analyze_string(self.sample_dict['ssdeep_hash'], self.sample_dict['url'])
         for identifier, value in report['similar samples']:
-            self.post_new_ssdeep_relation(self.sample_dict['url'], identifier, value)
-        self.submit_report(
-            analysis_request['url'],
-            additional_metadata={'number_of_similar_samples': len(report['similar samples'])}
+            SsdeepSampleRelation.create(sample, Sample.get(identifier), match=value)
 
+        self.submit_report(
+            scheduled_analysis,
+            json_report_objects={'ssdeep_report': {'number_of_similar_samples': len(report['similar samples'])}},
             )
+
+
+if __name__ == "__main__":
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+    update_config_from_env(config)
+    SsdeepAnalysisInstance.create_from_config(config).start()
