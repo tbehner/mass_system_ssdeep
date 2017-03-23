@@ -12,13 +12,14 @@ log = logging.getLogger('ssdeep_analysis_system')
 log.setLevel(logging.INFO)
 
 class SsdeepAnalysisInstance(AnalysisClient):
-    def __init__(self, **kwargs):
+    def __init__(self, config):
+        super().__init__(config)
         self.cache = dict()
         self._load_cache()
         self.ssdeep_analysis = CommonAnalysisSsdeep(self.cache)
-        super().__init__(**kwargs)
 
     def _load_cache(self):
+        log.info('Start loading cache...')
         start_time = time.time()
         for sample in Sample.items():
             if sample._class_identifier.startswith('Sample.FileSample'):
@@ -42,4 +43,4 @@ if __name__ == "__main__":
     config = configparser.ConfigParser()
     config.read('config.ini')
     update_config_from_env(config)
-    SsdeepAnalysisInstance.create_from_config(config).start()
+    SsdeepAnalysisInstance(config).start()
