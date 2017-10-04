@@ -9,6 +9,7 @@ RUN apk add --no-cache build-base && \
     apk add --no-cache automake && \
     apk add --no-cache libtool && \
     apk add --no-cache autoconf
+RUN pip3 install hurry.filesize
 COPY requirements.txt /
 # flag to build ssdeeplib and libfuzzy on pip install ssdeep
 ENV BUILD_LIB=1
